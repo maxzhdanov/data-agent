@@ -1,0 +1,66 @@
+{
+  "schemaId": "payment-instruction-v1",
+  "name": "Payment Instruction Fixed Width",
+  "version": "1.0",
+  "encoding": "utf-8",
+  "recordLength": 80,
+  "fields": [
+    {
+      "name": "RecordType",
+      "start": 0,
+      "length": 2,
+      "dataType": "string",
+      "required": true,
+      "pattern": "^(PI)$",
+      "description": "Record discriminator",
+      "qualityDimensions": ["Accuracy", "Understandability"]
+    },
+    {
+      "name": "AccountId",
+      "start": 2,
+      "length": 16,
+      "dataType": "string",
+      "required": true,
+      "pattern": "^[A-Z0-9]+$",
+      "qualityDimensions": ["Completeness", "Confidentiality", "Traceability"]
+    },
+    {
+      "name": "ValueDate",
+      "start": 18,
+      "length": 8,
+      "dataType": "date",
+      "required": true,
+      "qualityDimensions": ["Currentness", "Accuracy"]
+    },
+    {
+      "name": "Amount",
+      "start": 26,
+      "length": 16,
+      "dataType": "decimal",
+      "required": true,
+      "qualityDimensions": ["Precision", "Accuracy"]
+    },
+    {
+      "name": "Currency",
+      "start": 42,
+      "length": 3,
+      "dataType": "string",
+      "required": true,
+      "pattern": "^[A-Z]{3}$",
+      "qualityDimensions": ["Consistency", "Compliance"]
+    },
+    {
+      "name": "Narrative",
+      "start": 45,
+      "length": 35,
+      "dataType": "string",
+      "required": false,
+      "qualityDimensions": ["Understandability"]
+    }
+  ],
+  "datasetQuality": [
+    { "dimension": "Completeness", "required": true, "rule": "At least 95% of rows must parse cleanly.", "minimumScore": 0.95 },
+    { "dimension": "Traceability", "required": true, "rule": "Every row maps to schema and line number." },
+    { "dimension": "Recoverability", "required": true, "rule": "Invalid rows must be reconstructable from DLQ." }
+  ]
+}

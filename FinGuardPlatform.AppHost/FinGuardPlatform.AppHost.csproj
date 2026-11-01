@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Sdk Name="Aspire.AppHost.Sdk" Version="9.0.0" />
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsAspireHost>true</IsAspireHost>
+    <UserSecretsId>e98943f1-f759-4277-b214-8d4dca0d3dd6</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" Version="9.0.0" />
+    <PackageReference Include="Aspire.Hosting.Kafka" Version="9.0.0" />
+    <PackageReference Include="Aspire.Hosting.MongoDB" Version="9.0.0" />
+    <PackageReference Include="Aspire.Hosting.NodeJs" Version="9.0.0" />
+    <PackageReference Include="Microsoft.NET.Build.Containers" Version="10.0.303" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FinGuardPlatform.PipelineApp\FinGuardPlatform.PipelineApp.csproj" />
+    <ProjectReference Include="..\FinGuardPlatform.McpServer\FinGuardPlatform.McpServer.csproj" />
+  </ItemGroup>
+
+</Project>

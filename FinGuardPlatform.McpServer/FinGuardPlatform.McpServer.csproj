@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>FinGuardPlatform.McpServer</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FinGuardPlatform.CoreEngine\FinGuardPlatform.CoreEngine.csproj" />
+    <ProjectReference Include="..\FinGuardPlatform.ServiceDefaults\FinGuardPlatform.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\FinGuardPlatform.CoreEngine\Schemas\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Schemas\%(Filename)%(Extension)</Link>
+    </None>
+    <Content Include="..\data\iso-rules\**\*">
+      <Link>iso-rules\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

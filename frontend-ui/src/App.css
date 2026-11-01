@@ -1,0 +1,39 @@
+:root {
+  color: #e8eef7;
+  background: #0b1220;
+  font-family: "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+.shell {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 48px 24px;
+}
+
+.eyebrow {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #7fb3ff;
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+article {
+  background: #152238;
+  border: 1px solid #274062;
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+
+.metric {
+  font-size: 1.25rem;
+  color: #9ee7c8;
+}

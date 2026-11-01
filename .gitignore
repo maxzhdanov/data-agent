@@ -1,0 +1,17 @@
+bin/
+obj/
+.vs/
+.idea/
+*.user
+*.suo
+.appsettings.*.local.json
+secrets.json
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.log
+TestResults/
+aspire-output/

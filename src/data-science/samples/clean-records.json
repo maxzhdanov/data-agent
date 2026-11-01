@@ -1,0 +1,3 @@
+{"schemaId":"payment-instruction-v1","fields":{"AccountId":"ACC00000000001A","Amount":"1250.50","Currency":"EUR"}}
+{"schemaId":"payment-instruction-v1","fields":{"AccountId":"ACC00000000003C","Amount":"99.00","Currency":"EUR"}}
+{"schemaId":"payment-instruction-v1","fields":{"AccountId":"ACC00000000009Z","Amount":"990000.00","Currency":"EUR"}}

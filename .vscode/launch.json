@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "FinGuardPlatform.AppHost (CLI Global)",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "dotnet ${workspaceFolder}/FinGuardPlatform.AppHost/bin/Debug/net9.0/FinGuardPlatform.AppHost.dll",
+            "cwd": "${workspaceFolder}/FinGuardPlatform.AppHost",
+            "env": {
+                "ASPNETCORE_URLS": "http://localhost:17000",
+                "DOTNET_DASHBOARD_OTLP_ENDPOINT_URL": "http://localhost:18889",
+                "DOTNET_DASHBOARD_OTLP_HTTP_ENDPOINT_URL": "http://localhost:18890",
+                "ASPIRE_ALLOW_UNSECURED_TRANSPORT": "true"
+            }
+        }
+    ]
+}
