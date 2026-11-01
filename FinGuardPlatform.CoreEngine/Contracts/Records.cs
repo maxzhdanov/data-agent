@@ -58,9 +58,20 @@ public sealed class PipelineRunState
     public DateTimeOffset? LastStartedAt { get; set; }
     public DateTimeOffset? LastCompletedAt { get; set; }
     public string Status { get; set; } = "idle";
+    public string Stage { get; set; } = "idle";
+    public string SchemaId { get; set; } = string.Empty;
+    public string StorageTarget { get; set; } = string.Empty;
+    public long TotalRows { get; set; }
+    public long ProcessedRows { get; set; }
     public long CleanPublished { get; set; }
     public long DeadLettered { get; set; }
+    public long DeadLettersPersisted { get; set; }
     public long Persisted { get; set; }
+    public int? FileHealthScore { get; set; }
+    public string PrimaryFailureReason { get; set; } = string.Empty;
+    public string ReportMarkdown { get; set; } = string.Empty;
     public string? LastError { get; set; }
     public string InputPath { get; set; } = string.Empty;
+    public IReadOnlyList<string> AuditComments { get; set; } = [];
+    public IReadOnlyList<QualityFinding> QualityFindings { get; set; } = [];
 }

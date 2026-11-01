@@ -8,6 +8,11 @@ export default defineConfig({
       "/api": {
         target: process.env.DUCKDB_API_URL || "http://localhost:8002",
         changeOrigin: true
+      },
+      "/pipeline-api": {
+        target: process.env.PIPELINE_API_URL || "http://localhost:8003",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/pipeline-api/, "")
       }
     }
   }

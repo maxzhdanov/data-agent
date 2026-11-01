@@ -2,9 +2,7 @@ namespace FinGuardPlatform.PipelineApp.Configuration;
 
 public sealed class IngestionOptions
 {
-    public string InputPath { get; set; } = "samples/payments.fw";
-    public string SchemaPath { get; set; } = string.Empty;
-    public int WatchIntervalSeconds { get; set; } = 15;
+    public long MaximumUploadBytes { get; set; } = 20 * 1024 * 1024;
 }
 
 public sealed class KafkaOptions

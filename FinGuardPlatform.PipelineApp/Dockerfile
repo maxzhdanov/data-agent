@@ -1,6 +1,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 COPY Directory.Build.props ./
+COPY data ./data
 COPY FinGuardPlatform.ServiceDefaults ./FinGuardPlatform.ServiceDefaults
 COPY FinGuardPlatform.CoreEngine ./FinGuardPlatform.CoreEngine
 COPY FinGuardPlatform.PipelineApp ./FinGuardPlatform.PipelineApp

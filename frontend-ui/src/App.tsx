@@ -1,229 +1,71 @@
 import { useCallback, useEffect, useState } from "react";
+import { PIPELINE_API, requestJson } from "./api";
+import DuckDbExplorer from "./DuckDbExplorer";
+import SchemaEditor from "./SchemaEditor";
+import StorageBrowser from "./StorageBrowser";
+import Workflow from "./Workflow";
 
-type TableInfo = {
-  name: string;
-  columns: { name: string; type: string }[];
-  rowCount: number;
-};
-
-type TablePage = {
-  table: string;
-  columns: string[];
-  rows: Record<string, unknown>[];
-  totalRows: number;
-  limit: number;
-  offset: number;
-};
-
-const PAGE_SIZE = 25;
-
-function formatValue(value: unknown): string {
-  if (value === null || value === undefined) return "NULL";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
-}
+type ServiceStatus = { name: string; healthy: boolean; detail: string };
+type View = "workflow" | "schemas" | "storage" | "duckdb";
 
 export default function App() {
-  const [tables, setTables] = useState<TableInfo[]>([]);
-  const [selectedTable, setSelectedTable] = useState("");
-  const [page, setPage] = useState<TablePage | null>(null);
-  const [offset, setOffset] = useState(0);
-  const [loadingTables, setLoadingTables] = useState(true);
-  const [loadingRows, setLoadingRows] = useState(false);
+  const [view, setView] = useState<View>("workflow");
+  const [services, setServices] = useState<ServiceStatus[]>([]);
   const [error, setError] = useState("");
-  const [refreshKey, setRefreshKey] = useState(0);
 
-  const loadTables = useCallback(async () => {
-    setLoadingTables(true);
-    setError("");
+  const loadServices = useCallback(async () => {
     try {
-      const response = await fetch("/api/tables");
-      if (!response.ok) throw new Error(`Could not load tables (${response.status})`);
-      const result: { tables: TableInfo[] } = await response.json();
-      setTables(result.tables);
-      setSelectedTable((current) =>
-        result.tables.some((table) => table.name === current)
-          ? current
-          : (result.tables[0]?.name ?? "")
-      );
+      const result = await requestJson<{ services: ServiceStatus[] }>(`${PIPELINE_API}/dependencies`);
+      setServices(result.services);
+      setError("");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not connect to DuckDB");
-    } finally {
-      setLoadingTables(false);
+      setError(reason instanceof Error ? reason.message : "Pipeline service status is unavailable.");
     }
   }, []);
 
   useEffect(() => {
-    void loadTables();
-  }, [loadTables]);
-
-  useEffect(() => {
-    if (!selectedTable) {
-      setPage(null);
-      return;
-    }
-
-    const controller = new AbortController();
-    const loadPage = async () => {
-      setLoadingRows(true);
-      setError("");
-      try {
-        const params = new URLSearchParams({
-          limit: String(PAGE_SIZE),
-          offset: String(offset)
-        });
-        const response = await fetch(
-          `/api/tables/${encodeURIComponent(selectedTable)}?${params}`,
-          { signal: controller.signal }
-        );
-        if (!response.ok) throw new Error(`Could not load rows (${response.status})`);
-        setPage(await response.json());
-      } catch (reason) {
-        if (!controller.signal.aborted) {
-          setError(reason instanceof Error ? reason.message : "Could not load table rows");
-        }
-      } finally {
-        if (!controller.signal.aborted) setLoadingRows(false);
-      }
-    };
-
-    void loadPage();
-    return () => controller.abort();
-  }, [offset, refreshKey, selectedTable]);
-
-  const selectedInfo = tables.find((table) => table.name === selectedTable);
+    void loadServices();
+    const timer = window.setInterval(() => void loadServices(), 10000);
+    return () => window.clearInterval(timer);
+  }, [loadServices]);
 
   return (
     <main className="shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">FinGuard · local analytics</p>
-          <h1>DuckDB Explorer</h1>
-          <p className="intro">Browse tables and anomaly results in the embedded analytics database.</p>
+          <p className="eyebrow">FinGuard · local data quality and compliance</p>
+          <h1>Control Room</h1>
+          <p className="intro">Import, validate, audit, and inspect data using your local services.</p>
         </div>
-        <button
-          className="refresh-button"
-          onClick={() => {
-            void loadTables();
-            setRefreshKey((current) => current + 1);
-          }}
-          disabled={loadingTables}
-        >
-          {loadingTables ? "Refreshing…" : "Refresh"}
-        </button>
+        <button className="secondary-button" onClick={() => void loadServices()}>Refresh services</button>
       </header>
-
-      <section className="explorer">
-        <aside className="sidebar">
-          <div className="sidebar-heading">
-            <h2>Tables</h2>
-            <span className="count-badge">{tables.length}</span>
+      <section className="service-panel">
+        <div className="sidebar-heading"><h2>Connected components</h2><span className="muted">local health check</span></div>
+        {services.length === 0 ? <p className="muted">{error || "Checking services…"}</p> : (
+          <div className="dependency-grid">
+            {services.map((service) => <div className={`dependency-card${service.healthy ? " healthy" : " unhealthy"}`} key={service.name}>
+              <span className="status-dot" /><strong>{service.name}</strong><span title={service.detail}>{service.detail}</span>
+            </div>)}
           </div>
-          {loadingTables && tables.length === 0 ? (
-            <p className="muted">Connecting to DuckDB…</p>
-          ) : tables.length === 0 ? (
-            <p className="muted">No tables found in this database.</p>
-          ) : (
-            <ul className="table-list">
-              {tables.map((table) => (
-                <li key={table.name}>
-                  <button
-                    className={`table-button${selectedTable === table.name ? " selected" : ""}`}
-                    onClick={() => {
-                      setSelectedTable(table.name);
-                      setOffset(0);
-                    }}
-                  >
-                    <span className="table-name">{table.name}</span>
-                    <span className="table-count">{table.rowCount.toLocaleString()} rows</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </aside>
-
-        <section className="data-panel">
-          {selectedTable && (
-            <div className="data-heading">
-              <div>
-                <p className="eyebrow">Table</p>
-                <h2>{selectedTable}</h2>
-                {selectedInfo && (
-                  <p className="muted">
-                    {selectedInfo.columns.length} columns · {selectedInfo.rowCount.toLocaleString()} rows
-                  </p>
-                )}
-              </div>
-              <span className="database-label">DuckDB · read-only</span>
-            </div>
-          )}
-
-          {error && <div className="error-banner" role="alert">{error}</div>}
-
-          {!selectedTable && !loadingTables && !error && (
-            <div className="empty-state">
-              <h2>Database is empty</h2>
-              <p>Run the anomaly job to create the results table, then refresh.</p>
-              <code>python src\data-science\anomaly_detection.py</code>
-            </div>
-          )}
-
-          {selectedTable && (
-            <>
-              <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      {page?.columns.map((column) => <th key={column}>{column}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {loadingRows && !page ? (
-                      <tr><td className="table-message" colSpan={Math.max(selectedInfo?.columns.length ?? 1, 1)}>Loading rows…</td></tr>
-                    ) : page?.rows.length ? (
-                      page.rows.map((row, index) => (
-                        <tr key={`${page.offset + index}`}>
-                          {page.columns.map((column) => (
-                            <td key={column} title={formatValue(row[column])}>
-                              {formatValue(row[column])}
-                            </td>
-                          ))}
-                        </tr>
-                      ))
-                    ) : (
-                      <tr><td className="table-message" colSpan={Math.max(page?.columns.length ?? 1, 1)}>No rows in this table.</td></tr>
-                    )}
-                  </tbody>
-                </table>
-                {loadingRows && page && <div className="loading-overlay">Loading…</div>}
-              </div>
-
-              <footer className="pagination">
-                <span>
-                  {page && page.totalRows > 0
-                    ? `${page.offset + 1}–${Math.min(page.offset + page.limit, page.totalRows)} of ${page.totalRows.toLocaleString()} rows`
-                    : "0 rows"}
-                </span>
-                <div className="pagination-controls">
-                  <button
-                    onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-                    disabled={offset === 0 || loadingRows}
-                  >
-                    Previous
-                  </button>
-                  <button
-                    onClick={() => setOffset(offset + PAGE_SIZE)}
-                    disabled={!page || offset + PAGE_SIZE >= page.totalRows || loadingRows}
-                  >
-                    Next
-                  </button>
-                </div>
-              </footer>
-            </>
-          )}
-        </section>
+        )}
+        {error && services.length > 0 && <p className="error-inline" role="alert">{error}</p>}
       </section>
+      <nav className="view-tabs" aria-label="Application sections">
+        {([
+          ["workflow", "Import & progress"],
+          ["schemas", "Schemas"],
+          ["storage", "Storage browser"],
+          ["duckdb", "DuckDB"]
+        ] as const).map(([id, label]) => (
+          <button key={id} className={view === id ? "active" : ""} onClick={() => setView(id)}>{label}</button>
+        ))}
+      </nav>
+      <div className="view-content">
+        {view === "workflow" && <Workflow />}
+        {view === "schemas" && <SchemaEditor />}
+        {view === "storage" && <StorageBrowser />}
+        {view === "duckdb" && <DuckDbExplorer />}
+      </div>
     </main>
   );
 }

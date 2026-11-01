@@ -2,15 +2,16 @@ var builder = DistributedApplication.CreateBuilder(args);
 
 // 1. Core Event Broker Infrastructure (Apache Kafka Cluster via KRaft Engine Mode)
 var kafka = builder.AddContainer("kafka", "confluentinc/cp-kafka", "latest")
-    .WithEndpoint(port: 9092, targetPort: 9092, name: "client")
+    .WithEndpoint(port: 9092, targetPort: 29093, name: "client")
     .WithEnvironment("KAFKA_NODE_ID", "1")
-    .WithEnvironment("KAFKA_LISTENER_SECURITY_PROTOCOL_MAP", "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT")
-    .WithEnvironment("KAFKA_LISTENERS", "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:29092")
-    .WithEnvironment("KAFKA_ADVERTISED_LISTENERS", "PLAINTEXT://localhost:9092")
+    .WithEnvironment("KAFKA_LISTENER_SECURITY_PROTOCOL_MAP", "CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT")
+    .WithEnvironment("KAFKA_LISTENERS", "INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:29093,CONTROLLER://0.0.0.0:29092")
+    .WithEnvironment("KAFKA_ADVERTISED_LISTENERS", "INTERNAL://kafka:9092,EXTERNAL://localhost:9092")
+    .WithEnvironment("KAFKA_INTER_BROKER_LISTENER_NAME", "INTERNAL")
     .WithEnvironment("KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR", "1")
     .WithEnvironment("KAFKA_PROCESS_ROLES", "broker,controller")
-    .WithEnvironment("KAFKA_CONTROLLER_QUORUM_VOTERS", "1@localhost:29092")
-    .WithEnvironment ("KAFKA_CONTROLLER_LISTENER_NAMES", "CONTROLLER");
+    .WithEnvironment("KAFKA_CONTROLLER_QUORUM_VOTERS", "1@kafka:29092")
+    .WithEnvironment("KAFKA_CONTROLLER_LISTENER_NAMES", "CONTROLLER");
 
 // Lightweight real-time streaming validation dashboard interface
 var kafkaUi = builder.AddContainer("kafka-ui", "provectuslabs/kafka-ui", "latest")
@@ -42,13 +43,19 @@ var duckdb = builder.AddDockerfile("duckdb", "../src/data-science")
 
 // 5. Ingestion Engine Pipeline Service (Containerized to bypass Windows ASR rules)
 var pipeline = builder.AddDockerfile("pipeline", "..", "FinGuardPlatform.PipelineApp/Dockerfile")
+    .WithHttpEndpoint(port: 8003, targetPort: 8081, name: "http")
+    .WithVolume("finguard-pipeline-data", "/data")
     .WaitFor(mongo)
+    .WithReference(mongo)
     .WithEnvironment("Kafka__BootstrapServers", "kafka:9092")
     .WithEnvironment("Storage__Target", "MongoDb")
     .WithEnvironment("Storage__Mongo__Database", "finguard")
     .WithEnvironment("Ollama__BaseUrl", "http://ollama:11434")
     .WithEnvironment("Chroma__BaseUrl", "http://chromadb:8000")
-    .WithEnvironment("Storage__Dynamo__ServiceUrl", "http://dynamodb-local:8000");
+    .WithEnvironment("Storage__Dynamo__ServiceUrl", "http://dynamodb-local:8000")
+    .WithEnvironment("DuckDb__BaseUrl", "http://duckdb:8080")
+    .WithEnvironment("FinGuard__DataDirectory", "/data")
+    .WithEnvironment("PipelineStatePath", "/data/pipeline-state.json");
 
 // 6. Context Broker Bridge Server (Model Context Protocol Protocol Implementation Instance)
 builder.AddDockerfile("mcp", "..", "FinGuardPlatform.McpServer/Dockerfile")
@@ -61,6 +68,8 @@ builder.AddNpmApp("frontend-ui", "../frontend-ui")
     .WithExternalHttpEndpoints()
     .WithEnvironment("BROWSER", "none")
     .WithEnvironment("DUCKDB_API_URL", duckdb.GetEndpoint("http"))
-    .WaitFor(duckdb);
+    .WithEnvironment("PIPELINE_API_URL", pipeline.GetEndpoint("http"))
+    .WaitFor(duckdb)
+    .WaitFor(pipeline);
 
 builder.Build().Run();

@@ -9,8 +9,24 @@ dotnet restore FinGuardPlatform.sln
 dotnet run --project FinGuardPlatform.AppHost
 ```
 
-Docker Desktop must be running. First Ollama start does not pull a model automatically; pull `llama3.1` in the Ollama container when you want local inference.
-Aspire builds the DuckDB browser API, pipeline, and MCP container images from their Dockerfiles when the AppHost starts. Open the frontend dashboard and select a table to browse the embedded DuckDB results. The API is also available on port 8002, and the database is persisted in the `finguard-duckdb` Docker volume.
+Docker Desktop must be running. First Ollama start does not pull a model automatically; pull `llama3.1` in the Ollama container when you want local inference. Aspire builds the DuckDB browser API, pipeline, and MCP container images from their Dockerfiles when the AppHost starts.
+
+The control room supports fixed-width file upload (including directory selection), schema editing, import progress, local service health, browsing ChromaDB/MongoDB/DynamoDB, and DuckDB table browsing. Pipeline management API: port `8003`; DuckDB API: port `8002`. Uploads and custom schemas are stored in the `finguard-pipeline-data` Docker volume and temporary uploaded files are removed when processing completes.
+
+Generate synthetic test files and run deterministic unit tests:
+
+```powershell
+python tools\generate_samples.py
+dotnet test tests\FinGuardPlatform.Tests\FinGuardPlatform.Tests.csproj
+```
+
+With the Aspire stack running, run the integration smoke test:
+
+```powershell
+./tests/integration/Smoke-Test.ps1
+```
+
+See [docs/REQUIREMENTS.md](./docs/REQUIREMENTS.md) and [docs/agent_functional_specs.md](./docs/agent_functional_specs.md) for implemented scope, limitations, and follow-up requirements. The local-first design is not itself a security or regulatory certification; network egress controls and production access control remain deployment responsibilities.
 
 ## Projects
 
@@ -19,9 +35,9 @@ Aspire builds the DuckDB browser API, pipeline, and MCP container images from th
 | `FinGuardPlatform.AppHost` | Aspire orchestrator |
 | `FinGuardPlatform.ServiceDefaults` | OpenTelemetry, health checks, HTTP resilience |
 | `FinGuardPlatform.CoreEngine` | Fixed-width parser, ISO 25012 models, storage factory/strategy, Chroma RAG client |
-| `FinGuardPlatform.PipelineApp` | Ingestion worker, Kafka + DLQ, Polly retry/circuit breaker, Ollama rate limit |
+| `FinGuardPlatform.PipelineApp` | Import/API workflow, ISO validation, Kafka + DLQ, pluggable storage, local Ollama/Chroma audit |
 | `FinGuardPlatform.McpServer` | JSON-RPC MCP tools: schemas, pipeline state, ISO rule seeds |
-| `frontend-ui` | React + TypeScript DuckDB table explorer |
+| `frontend-ui` | React + TypeScript ingestion control room and storage browsers |
 | `src/data-science` | Embedded DuckDB anomalies + Chroma ingest |
 
 Default persistence is MongoDB (Cosmos DB API compatible). Set `Storage__Target=DynamoDbLocal` to switch via the factory.

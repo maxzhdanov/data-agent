@@ -12,9 +12,64 @@ public sealed class FixedWidthParser
     public FixedWidthParser(FixedWidthSchema schema)
     {
         ArgumentNullException.ThrowIfNull(schema);
+        if (string.IsNullOrWhiteSpace(schema.SchemaId))
+        {
+            throw new InvalidOperationException("Schema ID is required.");
+        }
+
+        if (schema.RecordLength <= 0)
+        {
+            throw new InvalidOperationException($"Schema '{schema.SchemaId}' must declare a positive record length.");
+        }
+
         if (schema.Fields.Count == 0)
         {
             throw new InvalidOperationException($"Schema '{schema.SchemaId}' has no fields.");
+        }
+
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ranges = new List<(int Start, int End, string Name)>();
+        foreach (var field in schema.Fields)
+        {
+            if (string.IsNullOrWhiteSpace(field.Name) || !names.Add(field.Name))
+            {
+                throw new InvalidOperationException($"Schema '{schema.SchemaId}' contains an empty or duplicate field name.");
+            }
+
+            if (field.Start < 0 || field.Length <= 0 || field.Start + field.Length > schema.RecordLength)
+            {
+                throw new InvalidOperationException($"Field '{field.Name}' is outside record length {schema.RecordLength}.");
+            }
+
+            var dataType = field.DataType.ToLowerInvariant();
+            if (dataType is not ("string" or "text" or "int" or "integer" or "decimal" or "number" or "date"))
+            {
+                throw new InvalidOperationException($"Field '{field.Name}' uses unsupported data type '{field.DataType}'.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(field.Pattern))
+            {
+                try
+                {
+                    _ = new Regex(field.Pattern, RegexOptions.None, TimeSpan.FromMilliseconds(100));
+                }
+                catch (ArgumentException exception)
+                {
+                    throw new InvalidOperationException($"Field '{field.Name}' has an invalid validation pattern.", exception);
+                }
+            }
+
+            ranges.Add((field.Start, field.Start + field.Length, field.Name));
+        }
+
+        var orderedRanges = ranges.OrderBy(range => range.Start).ToArray();
+        for (var index = 1; index < orderedRanges.Length; index++)
+        {
+            if (orderedRanges[index].Start < orderedRanges[index - 1].End)
+            {
+                throw new InvalidOperationException(
+                    $"Fields '{orderedRanges[index - 1].Name}' and '{orderedRanges[index].Name}' overlap.");
+            }
         }
 
         Schema = schema;
@@ -72,7 +127,7 @@ public sealed class FixedWidthParser
             }
 
             if (!string.IsNullOrEmpty(field.Pattern) && !string.IsNullOrEmpty(value) &&
-                !Regex.IsMatch(value, field.Pattern))
+                !Regex.IsMatch(value, field.Pattern, RegexOptions.None, TimeSpan.FromMilliseconds(100)))
             {
                 var message = $"Field '{field.Name}' does not match pattern.";
                 errors.Add(message);

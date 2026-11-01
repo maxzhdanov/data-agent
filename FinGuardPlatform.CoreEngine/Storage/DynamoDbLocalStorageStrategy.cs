@@ -94,6 +94,28 @@ public sealed class DynamoDbLocalStorageStrategy : IStorageStrategy, IDisposable
             }, cancellationToken);
         }
 
+        foreach (var name in new[] { _tableName, $"{_tableName}_dlq" })
+        {
+            var ready = false;
+            for (var attempt = 0; attempt < 50 && !ready; attempt++)
+            {
+                try
+                {
+                    var description = await _client.DescribeTableAsync(name, cancellationToken);
+                    ready = string.Equals(description.Table.TableStatus, "ACTIVE", StringComparison.Ordinal);
+                }
+                catch (ResourceNotFoundException) when (attempt < 49)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
+                }
+            }
+
+            if (!ready)
+            {
+                throw new TimeoutException($"DynamoDB Local table '{name}' did not become active.");
+            }
+        }
+
         _tableEnsured = true;
     }
 

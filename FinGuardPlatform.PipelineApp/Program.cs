@@ -3,14 +3,23 @@ using FinGuardPlatform.CoreEngine.State;
 using FinGuardPlatform.PipelineApp.Ai;
 using FinGuardPlatform.PipelineApp.Configuration;
 using FinGuardPlatform.PipelineApp.Ingestion;
+using FinGuardPlatform.PipelineApp.Management;
+using FinGuardPlatform.PipelineApp.Rag;
 using FinGuardPlatform.PipelineApp.Messaging;
 using FinGuardPlatform.PipelineApp.RateLimiting;
 using FinGuardPlatform.PipelineApp.Resilience;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 
-var builder = Host.CreateApplicationBuilder(args);
+var builder = WebApplication.CreateBuilder(args);
+builder.WebHost.UseUrls(builder.Configuration["ASPNETCORE_URLS"] ?? "http://0.0.0.0:8081");
 builder.AddServiceDefaults();
 
 builder.Services.Configure<IngestionOptions>(builder.Configuration.GetSection("Ingestion"));
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = 20 * 1024 * 1024;
+});
 builder.Services.Configure<KafkaOptions>(builder.Configuration.GetSection("Kafka"));
 builder.Services.PostConfigure<KafkaOptions>(options =>
 {
@@ -34,6 +43,24 @@ builder.Services.Configure<RateLimitingOptions>(builder.Configuration.GetSection
 
 builder.Services.AddFinGuardCoreEngine(builder.Configuration);
 builder.Services.AddFinGuardResilience(builder.Configuration);
+builder.Services.AddSingleton<SchemaCatalog>();
+builder.Services.AddSingleton<DataBrowser>();
+builder.Services.AddHostedService<ChromaRuleSeeder>();
+builder.Services.AddHttpClient("chroma-browser", client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["Chroma:BaseUrl"] ?? "http://localhost:8000");
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
+builder.Services.AddHttpClient("ollama-health", client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["Ollama:BaseUrl"] ?? "http://localhost:11434");
+    client.Timeout = TimeSpan.FromSeconds(3);
+});
+builder.Services.AddHttpClient("duckdb-health", client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["DuckDb:BaseUrl"] ?? "http://localhost:8002");
+    client.Timeout = TimeSpan.FromSeconds(3);
+});
 builder.Services.AddSingleton<OllamaInferenceLimiter>();
 builder.Services.AddSingleton<IRecordPublisher, KafkaRecordPublisher>();
 builder.Services.AddSingleton<IPipelineStateStore>(_ =>
@@ -52,7 +79,10 @@ builder.Services.AddHttpClient<IOllamaAuditClient, OllamaAuditClient>((sp, clien
     client.BaseAddress = new Uri(options.BaseUrl);
     client.Timeout = TimeSpan.FromSeconds(45);
 });
-builder.Services.AddHostedService<IngestionWorker>();
+builder.Services.AddSingleton<IngestionWorker>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<IngestionWorker>());
 
-var host = builder.Build();
-await host.RunAsync();
+var app = builder.Build();
+app.MapDefaultEndpoints();
+app.MapManagementApi();
+await app.RunAsync();

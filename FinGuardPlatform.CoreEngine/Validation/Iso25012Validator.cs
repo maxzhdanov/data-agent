@@ -4,7 +4,11 @@ namespace FinGuardPlatform.CoreEngine.Validation;
 
 public sealed class Iso25012Validator
 {
-    public IReadOnlyList<QualityFinding> EvaluateDataset(FixedWidthSchema schema, int cleanCount, int deadLetterCount)
+    public IReadOnlyList<QualityFinding> EvaluateDataset(
+        FixedWidthSchema schema,
+        int cleanCount,
+        int deadLetterCount,
+        int deadLettersPersisted)
     {
         var findings = new List<QualityFinding>();
         var total = cleanCount + deadLetterCount;
@@ -15,7 +19,7 @@ public sealed class Iso25012Validator
             var passed = requirement.Dimension switch
             {
                 Iso25012Dimension.Completeness => completeness >= (requirement.MinimumScore ?? 0.95),
-                Iso25012Dimension.Recoverability => deadLetterCount == 0 || true,
+                Iso25012Dimension.Recoverability => deadLettersPersisted >= deadLetterCount,
                 Iso25012Dimension.Traceability => !string.IsNullOrWhiteSpace(schema.SchemaId),
                 _ => true
             };

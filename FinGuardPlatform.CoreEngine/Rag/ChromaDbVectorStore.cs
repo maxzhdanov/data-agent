@@ -30,6 +30,21 @@ public sealed class ChromaDbVectorStore : IVectorStore
             return;
         }
 
+        var collectionId = await FindCollectionIdAsync(_options.Collection, cancellationToken);
+        if (collectionId is null)
+        {
+            using var createResponse = await _http.PostAsJsonAsync(
+                $"/api/v2/tenants/{Uri.EscapeDataString(_options.Tenant)}/databases/{Uri.EscapeDataString(_options.Database)}/collections",
+                new { name = _options.Collection },
+                cancellationToken);
+            createResponse.EnsureSuccessStatusCode();
+            using var created = await JsonDocument.ParseAsync(
+                await createResponse.Content.ReadAsStreamAsync(cancellationToken),
+                cancellationToken: cancellationToken);
+            collectionId = created.RootElement.GetProperty("id").GetString()
+                           ?? throw new InvalidDataException("ChromaDB created a collection without an ID.");
+        }
+
         var body = new
         {
             ids = payload.Select(c => c.Id).ToArray(),
@@ -41,28 +56,32 @@ public sealed class ChromaDbVectorStore : IVectorStore
             }).ToArray()
         };
 
-        var response = await _http.PostAsJsonAsync(
-            $"/api/v2/tenants/{_options.Tenant}/databases/{_options.Database}/collections/{_options.Collection}/upsert",
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/v2/tenants/{Uri.EscapeDataString(_options.Tenant)}/databases/{Uri.EscapeDataString(_options.Database)}/collections/{Uri.EscapeDataString(collectionId)}/upsert",
             body,
             cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            _logger.LogWarning("Chroma upsert returned {Status}", response.StatusCode);
-        }
+        response.EnsureSuccessStatusCode();
     }
 
     public async Task<IReadOnlyList<SemanticHit>> QueryAsync(string collection, string query, int topK, CancellationToken cancellationToken)
     {
+        var collectionId = await FindCollectionIdAsync(collection, cancellationToken);
+        if (collectionId is null)
+        {
+            _logger.LogInformation("ChromaDB collection {Collection} is not present yet.", collection);
+            return [];
+        }
+
         var request = new { query_texts = new[] { query }, n_results = topK };
         using var response = await _http.PostAsJsonAsync(
-            $"/api/v2/tenants/{_options.Tenant}/databases/{_options.Database}/collections/{collection}/query",
+            $"/api/v2/tenants/{Uri.EscapeDataString(_options.Tenant)}/databases/{Uri.EscapeDataString(_options.Database)}/collections/{Uri.EscapeDataString(collectionId)}/query",
             request,
             cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogWarning("Chroma query returned {Status}; returning empty hits.", response.StatusCode);
-            return [];
+            var detail = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new HttpRequestException($"ChromaDB query failed with {(int)response.StatusCode}: {detail}");
         }
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -92,6 +111,27 @@ public sealed class ChromaDbVectorStore : IVectorStore
         }
 
         return hits;
+    }
+
+    private async Task<string?> FindCollectionIdAsync(string collectionName, CancellationToken cancellationToken)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/v2/tenants/{Uri.EscapeDataString(_options.Tenant)}/databases/{Uri.EscapeDataString(_options.Database)}/collections",
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+        using var document = await JsonDocument.ParseAsync(
+            await response.Content.ReadAsStreamAsync(cancellationToken),
+            cancellationToken: cancellationToken);
+        foreach (var item in document.RootElement.EnumerateArray())
+        {
+            if (item.TryGetProperty("name", out var name) &&
+                string.Equals(name.GetString(), collectionName, StringComparison.Ordinal))
+            {
+                return item.GetProperty("id").GetString();
+            }
+        }
+
+        return null;
     }
 }
 
