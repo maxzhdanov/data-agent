@@ -12,11 +12,17 @@ public static class CoreEngineServiceCollectionExtensions
     {
         services.Configure<StorageOptions>(configuration.GetSection("Storage"));
         services.Configure<ChromaOptions>(configuration.GetSection("Chroma"));
+        services.Configure<EmbeddingOptions>(configuration.GetSection("Embeddings"));
         services.AddSingleton<Iso25012Validator>();
         services.AddSingleton<MongoDbStorageStrategy>();
         services.AddSingleton<DynamoDbLocalStorageStrategy>();
         services.AddSingleton<IStorageStrategyFactory, StorageStrategyFactory>();
         services.AddSingleton<IStorageStrategy>(sp => sp.GetRequiredService<IStorageStrategyFactory>().CreateFromConfiguration());
+        services.AddHttpClient<ITextEmbeddingGenerator, OllamaEmbeddingGenerator>((_, client) =>
+        {
+            client.BaseAddress = new Uri(configuration["Ollama:BaseUrl"] ?? "http://localhost:11434");
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
         services.AddHttpClient<IVectorStore, ChromaDbVectorStore>((sp, client) =>
         {
             var options = configuration.GetSection("Chroma").Get<ChromaOptions>() ?? new ChromaOptions();

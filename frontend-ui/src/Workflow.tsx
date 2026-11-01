@@ -20,6 +20,8 @@ type ImportRun = {
   reportMarkdown: string;
   lastError?: string | null;
   auditComments: string[];
+  auditFailures: number;
+  auditErrors: string[];
   qualityFindings: QualityFinding[];
   lastStartedAt?: string | null;
 };
@@ -175,6 +177,7 @@ export default function Workflow() {
                     {run.fileHealthScore !== null && run.fileHealthScore !== undefined && <span>Health <b>{run.fileHealthScore}/100</b></span>}
                   </div>
                   {run.lastError && <p className="error-inline">{run.lastError}</p>}
+                  {run.auditErrors?.map((error, index) => <p className="error-inline" key={`audit-${index}`}>{error}</p>)}
                   {run.primaryFailureReason && run.status === "completed" && <p className="muted">Primary finding: {run.primaryFailureReason}</p>}
                   {run.reportMarkdown && <details><summary>Markdown audit report</summary><pre className="json-view">{run.reportMarkdown}</pre></details>}
                   {run.qualityFindings.length > 0 && <details><summary>ISO 25012 findings ({run.qualityFindings.length})</summary>

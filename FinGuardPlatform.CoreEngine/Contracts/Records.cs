@@ -73,5 +73,7 @@ public sealed class PipelineRunState
     public string? LastError { get; set; }
     public string InputPath { get; set; } = string.Empty;
     public IReadOnlyList<string> AuditComments { get; set; } = [];
+    public long AuditFailures { get; set; }
+    public IReadOnlyList<string> AuditErrors { get; set; } = [];
     public IReadOnlyList<QualityFinding> QualityFindings { get; set; } = [];
 }

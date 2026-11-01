@@ -12,7 +12,6 @@ namespace FinGuardPlatform.PipelineApp.Ai;
 
 public interface IOllamaAuditClient
 {
-    Task<string?> CommentAsync(CleanRecord record, CancellationToken cancellationToken);
     Task<string?> CommentOnDeadLetterAsync(DeadLetterPayload payload, CancellationToken cancellationToken);
 }
 
@@ -41,22 +40,6 @@ public sealed class OllamaAuditClient : IOllamaAuditClient
         }
     }
 
-    public async Task<string?> CommentAsync(CleanRecord record, CancellationToken cancellationToken)
-    {
-        if (!_options.Enabled)
-        {
-            return null;
-        }
-
-        var context = await RetrieveContextAsync(
-            $"Audit payment record schema {record.SchemaId} for ISO 25012 completeness and ISO 27001 access control.",
-            cancellationToken);
-        return await GenerateAsync(
-            $"Summarize residual data-quality risk for record {record.CorrelationId} with fields {string.Join(',', record.Fields.Keys)}.",
-            context,
-            cancellationToken);
-    }
-
     public async Task<string?> CommentOnDeadLetterAsync(DeadLetterPayload payload, CancellationToken cancellationToken)
     {
         if (!_options.Enabled)
@@ -77,7 +60,7 @@ public sealed class OllamaAuditClient : IOllamaAuditClient
 
     private async Task<string> RetrieveContextAsync(string question, CancellationToken cancellationToken)
     {
-        var hits = await _rules.RetrieveIsoRulesAsync(question, 3, cancellationToken);
+        var hits = await _rules.RetrieveIsoRulesAsync(question, 1, cancellationToken);
         return string.Join("\n", hits.Select(hit => hit.Chunk.Text));
     }
 
@@ -90,7 +73,10 @@ public sealed class OllamaAuditClient : IOllamaAuditClient
             {
                 model = _options.Model,
                 stream = false,
-                prompt = $"You are the FinGuard local audit assistant. Use only this retrieved policy context:\n{context}\n\n{request}"
+                keep_alive = "5m",
+                options = new { num_predict = _options.NumPredict, temperature = 0.1 },
+                prompt = $"You are the FinGuard local audit assistant. Use only this policy context:\n{context}\n\n" +
+                         $"{request}\nDo not infer missing values or regulatory conclusions. Reply in one concise sentence."
             }, ct);
 
             response.EnsureSuccessStatusCode();

@@ -1,4 +1,31 @@
 var builder = DistributedApplication.CreateBuilder(args);
+var allowUnsecuredTransport = string.Equals(
+    builder.Configuration["ASPIRE_ALLOW_UNSECURED_TRANSPORT"],
+    "true",
+    StringComparison.OrdinalIgnoreCase);
+var dashboardScheme = allowUnsecuredTransport ? "http" : "https";
+
+// Aspire's dashboard options require these values even when the AppHost is launched without a profile.
+if (string.IsNullOrWhiteSpace(builder.Configuration["ASPNETCORE_URLS"]))
+{
+    builder.Configuration["ASPNETCORE_URLS"] = $"{dashboardScheme}://localhost:17002";
+}
+
+if (string.IsNullOrWhiteSpace(builder.Configuration["DOTNET_DASHBOARD_OTLP_ENDPOINT_URL"]) &&
+    string.IsNullOrWhiteSpace(builder.Configuration["DOTNET_DASHBOARD_OTLP_HTTP_ENDPOINT_URL"]))
+{
+    builder.Configuration["DOTNET_DASHBOARD_OTLP_ENDPOINT_URL"] = $"{dashboardScheme}://localhost:21297";
+}
+
+if (string.IsNullOrWhiteSpace(builder.Configuration["DOTNET_DASHBOARD_OTLP_HTTP_ENDPOINT_URL"]))
+{
+    builder.Configuration["DOTNET_DASHBOARD_OTLP_HTTP_ENDPOINT_URL"] = $"{dashboardScheme}://localhost:21298";
+}
+
+if (string.IsNullOrWhiteSpace(builder.Configuration["DOTNET_RESOURCE_SERVICE_ENDPOINT_URL"]))
+{
+    builder.Configuration["DOTNET_RESOURCE_SERVICE_ENDPOINT_URL"] = $"{dashboardScheme}://localhost:22206";
+}
 
 // 1. Core Event Broker Infrastructure (Apache Kafka Cluster via KRaft Engine Mode)
 var kafka = builder.AddContainer("kafka", "confluentinc/cp-kafka", "latest")
@@ -55,7 +82,8 @@ var pipeline = builder.AddDockerfile("pipeline", "..", "FinGuardPlatform.Pipelin
     .WithEnvironment("Storage__Dynamo__ServiceUrl", "http://dynamodb-local:8000")
     .WithEnvironment("DuckDb__BaseUrl", "http://duckdb:8080")
     .WithEnvironment("FinGuard__DataDirectory", "/data")
-    .WithEnvironment("PipelineStatePath", "/data/pipeline-state.json");
+    .WithEnvironment("PipelineStatePath", "/data/pipeline-state.json")
+    .WithOtlpExporter();
 
 // 6. Context Broker Bridge Server (Model Context Protocol Protocol Implementation Instance)
 builder.AddDockerfile("mcp", "..", "FinGuardPlatform.McpServer/Dockerfile")

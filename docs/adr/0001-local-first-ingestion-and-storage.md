@@ -26,14 +26,18 @@ certification.
 3. Publish clean records, rejected rows, and AI comments to Kafka topics.
 4. Persist each import to one selected storage strategy: MongoDB or DynamoDB
    Local. Keep the strategy behind an interface/factory.
-5. Run LLM inference through local Ollama. Retrieve project-authored ISO
-   operational rule summaries from ChromaDB and include relevant text in the
-   audit prompt.
+5. Run embeddings and LLM inference through local Ollama. Store embeddings for
+   project-authored ISO operational rule summaries in ChromaDB, retrieve the
+   single most relevant document for rejected-row audit prompts, and use the
+   LLM only to generate explanatory comments. Clean records do not invoke the
+   LLM.
 6. Keep DuckDB as a separate embedded analytics/results store with a read-only
    browser API. Do not represent it as a sink for fixed-width imports until that
    integration is implemented.
 7. Provide a React control room, a separate MCP server interface, deterministic
    unit tests, synthetic fixtures, and a service-backed smoke test.
+8. Instrument the ingestion pipeline with OpenTelemetry metrics, traces, and
+   structured logs, exported to the Aspire dashboard.
 
 ## Options considered
 
@@ -81,6 +85,8 @@ it cannot override parser decisions or replace validation.
   contract.
 - Kafka topics expose pipeline events for inspection and future consumers.
 - Rule retrieval and text generation stay on the local service path by default.
+- AI audit failures remain visible as separate run diagnostics without failing
+  otherwise successful deterministic ingestion.
 - Synthetic examples and a test harness make the intended clean/DLQ outcomes
   reproducible.
 

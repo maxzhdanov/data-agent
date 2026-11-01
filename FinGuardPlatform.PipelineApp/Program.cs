@@ -77,7 +77,7 @@ builder.Services.AddHttpClient<IOllamaAuditClient, OllamaAuditClient>((sp, clien
 {
     var options = builder.Configuration.GetSection("Ollama").Get<OllamaOptions>() ?? new OllamaOptions();
     client.BaseAddress = new Uri(options.BaseUrl);
-    client.Timeout = TimeSpan.FromSeconds(45);
+    client.Timeout = TimeSpan.FromSeconds(180);
 });
 builder.Services.AddSingleton<IngestionWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<IngestionWorker>());

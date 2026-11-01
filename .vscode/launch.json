@@ -11,6 +11,7 @@
                 "ASPNETCORE_URLS": "http://localhost:17000",
                 "DOTNET_DASHBOARD_OTLP_ENDPOINT_URL": "http://localhost:18889",
                 "DOTNET_DASHBOARD_OTLP_HTTP_ENDPOINT_URL": "http://localhost:18890",
+                "DOTNET_RESOURCE_SERVICE_ENDPOINT_URL": "http://localhost:18891",
                 "ASPIRE_ALLOW_UNSECURED_TRANSPORT": "true"
             }
         }

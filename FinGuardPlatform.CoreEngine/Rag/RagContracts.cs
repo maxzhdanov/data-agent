@@ -27,6 +27,16 @@ public interface IAuditRuleRetriever
     Task<IReadOnlyList<SemanticHit>> RetrieveIsoRulesAsync(string question, int topK, CancellationToken cancellationToken);
 }
 
+public interface ITextEmbeddingGenerator
+{
+    Task<IReadOnlyList<float[]>> GenerateAsync(IReadOnlyList<string> texts, CancellationToken cancellationToken);
+}
+
+public sealed class EmbeddingOptions
+{
+    public string Model { get; set; } = "nomic-embed-text";
+}
+
 public sealed class ChromaOptions
 {
     public string BaseUrl { get; set; } = "http://localhost:8000";

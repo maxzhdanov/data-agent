@@ -9,9 +9,21 @@ dotnet restore FinGuardPlatform.sln
 dotnet run --project FinGuardPlatform.AppHost
 ```
 
-Docker Desktop must be running. First Ollama start does not pull a model automatically; pull `llama3.1` in the Ollama container when you want local inference. Aspire builds the DuckDB browser API, pipeline, and MCP container images from their Dockerfiles when the AppHost starts.
+Docker Desktop must be running. Ollama does not pull models automatically. After Aspire starts, ensure its Ollama container has the configured generation and embedding models (the Windows host's separate Ollama model list is not shared with the container):
+
+```powershell
+$ollama = docker ps --filter "name=ollama" --format "{{.ID}}" | Select-Object -First 1
+docker exec $ollama ollama pull granite-code:latest
+docker exec $ollama ollama pull nomic-embed-text
+```
+
+`granite-code:latest` generates local audit comments; `nomic-embed-text` supplies vectors for ChromaDB. Aspire builds the DuckDB browser API, pipeline, and MCP container images from their Dockerfiles when the AppHost starts.
+
+The Aspire dashboard is configured by the AppHost launch settings and the VS Code launch configuration. For a local HTTP dashboard, configure `ASPNETCORE_URLS`, `DOTNET_DASHBOARD_OTLP_ENDPOINT_URL`, `DOTNET_DASHBOARD_OTLP_HTTP_ENDPOINT_URL`, and `DOTNET_RESOURCE_SERVICE_ENDPOINT_URL` consistently; setting only the OTLP endpoints is insufficient. The repository's VS Code configuration sets these alongside `ASPIRE_ALLOW_UNSECURED_TRANSPORT=true`. Unsecured HTTP is for local development only; use the HTTPS profile when its development certificate is trusted.
 
 The control room supports fixed-width file upload (including directory selection), schema editing, import progress, local service health, browsing ChromaDB/MongoDB/DynamoDB, and DuckDB table browsing. Pipeline management API: port `8003`; DuckDB API: port `8002`. Uploads and custom schemas are stored in the `finguard-pipeline-data` Docker volume and temporary uploaded files are removed when processing completes.
+
+Only rejected/dead-letter rows invoke the local AI audit path; clean rows are validated, published, and persisted without an LLM request. Audit failures are shown separately in run state and do not fail the import. Pipeline metrics, traces, and structured logs are exported to the Aspire dashboard when the pipeline runs under Aspire.
 
 Generate synthetic test files and run deterministic unit tests:
 
@@ -40,9 +52,9 @@ Architecture and onboarding references:
 | Project | Role |
 | --- | --- |
 | `FinGuardPlatform.AppHost` | Aspire orchestrator |
-| `FinGuardPlatform.ServiceDefaults` | OpenTelemetry, health checks, HTTP resilience |
-| `FinGuardPlatform.CoreEngine` | Fixed-width parser, ISO 25012 models, storage factory/strategy, Chroma RAG client |
-| `FinGuardPlatform.PipelineApp` | Import/API workflow, ISO validation, Kafka + DLQ, pluggable storage, local Ollama/Chroma audit |
+| `FinGuardPlatform.ServiceDefaults` | OpenTelemetry logs, metrics and traces, health checks, HTTP resilience |
+| `FinGuardPlatform.CoreEngine` | Fixed-width parser, ISO 25012 models, storage factory/strategy, Chroma vector store, local Ollama embeddings |
+| `FinGuardPlatform.PipelineApp` | Import/API workflow, ISO validation, Kafka + DLQ, pluggable storage, dead-letter-only Ollama/Chroma audit, pipeline telemetry |
 | `FinGuardPlatform.McpServer` | JSON-RPC MCP tools: schemas, pipeline state, ISO rule seeds |
 | `frontend-ui` | React + TypeScript ingestion control room and storage browsers |
 | `src/data-science` | Embedded DuckDB anomalies + Chroma ingest |

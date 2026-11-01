@@ -26,7 +26,12 @@ public static class Extensions
         builder.Services.ConfigureHttpClientDefaults(http =>
         {
             // Turn on resilience by default
-            http.AddStandardResilienceHandler();
+            http.AddStandardResilienceHandler(options =>
+            {
+                options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(120);
+                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(180);
+                options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(240);
+            });
 
             // Turn on service discovery by default
             http.AddServiceDiscovery();
@@ -54,11 +59,13 @@ public static class Extensions
             {
                 metrics.AddAspNetCoreInstrumentation()
                     .AddHttpClientInstrumentation()
-                    .AddRuntimeInstrumentation();
+                    .AddRuntimeInstrumentation()
+                    .AddMeter("FinGuardPlatform.PipelineApp");
             })
             .WithTracing(tracing =>
             {
                 tracing.AddAspNetCoreInstrumentation()
+                    .AddSource("FinGuardPlatform.PipelineApp")
                     // Uncomment the following line to enable gRPC instrumentation (requires the OpenTelemetry.Instrumentation.GrpcNetClient package)
                     //.AddGrpcClientInstrumentation()
                     .AddHttpClientInstrumentation();

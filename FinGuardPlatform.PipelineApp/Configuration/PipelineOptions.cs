@@ -13,7 +13,8 @@ public sealed class KafkaOptions
 public sealed class OllamaOptions
 {
     public string BaseUrl { get; set; } = "http://localhost:11434";
-    public string Model { get; set; } = "llama3.1";
+    public string Model { get; set; } = "granite-code:latest";
+    public int NumPredict { get; set; } = 48;
     public bool Enabled { get; set; } = true;
 }
 

@@ -21,7 +21,10 @@ flowchart LR
         Dynamo[(DynamoDB Local)]
         Chroma[(ChromaDB)]
         Ollama[Ollama local model]
+        Embedder[Ollama embedding endpoint]
         Audit[Ollama audit client]
+        Telemetry[Pipeline metrics, traces, structured logs]
+        Dashboard[Aspire dashboard / OTLP]
         DuckAPI[DuckDB browser API]
         Duck[(Embedded DuckDB file)]
         MCP[MCP server]
@@ -39,9 +42,12 @@ flowchart LR
     Worker --> Mongo
     Worker --> Dynamo
     Worker --> Audit
-    Audit --> Chroma
+    Audit -->|embed rejected-row query| Embedder
+    Embedder -->|upsert vectors / query vector| Chroma
     Audit --> Ollama
-    Rules --> Chroma
+    Worker --> Telemetry
+    Telemetry --> Dashboard
+    Rules --> Embedder
     Schema --> Core
     DuckAPI --> Duck
     MCPClient --> MCP
@@ -51,7 +57,9 @@ flowchart LR
 
 MongoDB and DynamoDB Local are alternative per-import targets. DuckDB is a
 separate analytics service and is not currently fed by fixed-width imports.
-Kafka currently has producers but no FinGuard consumer.
+Only dead-letter rows enter the AI audit path; clean rows are published and
+persisted without an LLM request. Kafka currently has producers but no FinGuard
+consumer.
 
 ## Data flow: import, validation, audit, and persistence
 
@@ -72,11 +80,13 @@ flowchart TD
     PersistClean[Selected MongoDB or DynamoDB Local]
     PersistDLQ[Selected store dead-letter collection/table]
     AuditClient[Ollama audit client]
-    Chroma[ChromaDB: retrieve up to 3 ISO rule documents]
+    Embedder[Ollama embedding endpoint]
+    Chroma[ChromaDB: retrieve the top ISO rule document]
     Prompt[Build prompt from retrieved rules and safe error/field metadata]
     Ollama[Generate comment with local Ollama]
     AuditTopic[Kafka audit-comment topic]
     State[Latest-run state file and Markdown report]
+    Telemetry[OpenTelemetry metrics, spans, and structured logs]
 
     User --> UI --> API --> Queue --> Worker --> Schema --> Parse --> Validate
     Validate -->|Yes| Clean
@@ -85,32 +95,34 @@ flowchart TD
     Clean --> PersistClean
     Reject --> KafkaDLQ
     Reject --> PersistDLQ
-    Clean --> AuditClient
     Reject --> AuditClient
-    AuditClient --> Chroma
+    AuditClient --> Embedder
+    Embedder --> Chroma
     Chroma --> Prompt
     AuditClient --> Prompt
     Prompt --> Ollama
     Ollama --> AuditTopic
+    AuditClient -. audit failure recorded; import continues .-> State
     Worker --> State
+    Worker --> Telemetry
     UI -->|polls progress| API
     API -->|reads| State
     API -->|returns progress and report| UI
 ```
 
 The worker processes rows sequentially within a run. Parser/schema validation
-determines clean versus dead-letter status; it does not rely on the LLM. The
-current worker publishes each event and persists it directly, then obtains the AI
-comment. Kafka is therefore an event stream alongside direct persistence, not a
-consumer-driven persistence stage. Progress is persisted as a latest-run state,
-not a durable full run history.
+determines clean versus dead-letter status; it does not rely on the LLM. Clean
+records are published and persisted directly. Dead letters are published and
+persisted before the optional AI audit request; audit failures are recorded in
+run diagnostics and do not stop subsequent rows. Kafka is therefore an event
+stream alongside direct persistence, not a consumer-driven persistence stage.
+Progress is persisted as a latest-run state, not a durable full run history.
 
 ## Data flow: sequence diagram
 
 The sequence below expands a single import into API acceptance, per-row
-processing, local RAG-assisted audit, and UI progress polling. The `alt` branches
-show that clean and rejected rows are both published, persisted to the selected
-target, and sent through the audit-comment flow.
+processing, local RAG-assisted audit for rejected rows only, and UI progress
+polling. Clean rows are published and persisted without model inference.
 
 ```mermaid
 sequenceDiagram
@@ -120,14 +132,24 @@ sequenceDiagram
     participant API as Pipeline management API
     participant Queue as Import queue
     participant Worker as Ingestion worker
+    participant Seeder as Chroma rule seeder
     participant Catalog as Schema catalog
     participant Parser as Fixed-width parser
     participant Kafka as Kafka producer/broker
     participant Store as Selected MongoDB or DynamoDB Local
     participant Audit as Ollama audit client
+    participant Embedder as Ollama embedding API
     participant Chroma as ChromaDB
     participant Ollama as Local Ollama model
     participant State as Run state store
+    participant OTEL as Aspire OTLP dashboard
+
+    opt Application startup: seed policy documents
+        Seeder->>Embedder: Embed ISO rule documents
+        Embedder-->>Seeder: Document vectors
+        Seeder->>Chroma: Upsert rule documents and vectors
+        Chroma-->>Seeder: Upsert acknowledged
+    end
 
     User->>UI: Select file, schema, and target
     UI->>API: POST /api/import (multipart file)
@@ -148,32 +170,41 @@ sequenceDiagram
             Kafka-->>Worker: Publish acknowledged
             Worker->>Store: Persist clean record
             Store-->>Worker: Persisted
-            Worker->>Audit: Request clean-record comment
         else Invalid row
             Parser-->>Worker: DeadLetterPayload and errors
             Worker->>Kafka: Publish dead-letter event
             Kafka-->>Worker: Publish acknowledged
             Worker->>Store: Persist dead letter
             Store-->>Worker: Persisted
-            Worker->>Audit: Request rejection explanation
+            opt AI audit enabled
+                Worker->>Audit: Request rejection explanation
+                Audit->>Embedder: Embed audit query text
+                Embedder-->>Audit: Query vector
+                Audit->>Chroma: Query with query_embeddings (top 1)
+                Chroma-->>Audit: Rule context
+                Audit->>Ollama: Generate concise comment from context and validation errors
+                Ollama-->>Audit: Audit comment
+                alt Non-empty comment
+                    Audit->>Kafka: Publish audit-comment event
+                    Kafka-->>Audit: Publish acknowledged
+                else Audit request or publish fails
+                    Audit-->>Worker: Record audit error; continue import
+                end
+            end
         end
-        Audit->>Chroma: Retrieve up to 3 relevant ISO rule documents
-        Chroma-->>Audit: Rule context
-        Audit->>Ollama: Generate comment from context and safe metadata
-        Ollama-->>Audit: Audit comment
-        Audit->>Kafka: Publish audit-comment event
-        Kafka-->>Audit: Publish acknowledged
         Worker->>State: Save updated row counts and progress
+        Worker-->>OTEL: Emit row metric and processing span
     end
 
-    Worker->>State: Save completed status and Markdown report
+    Worker->>State: Save completed status, audit diagnostics, and Markdown report
+    Worker-->>OTEL: Emit run metrics, duration, spans, and structured logs
     loop While run is active
         UI->>API: GET /api/runs/{runId}
         API->>State: Read latest run state
         State-->>API: Progress and report fields
         API-->>UI: Run state
     end
-    UI-->>User: Show completion, findings, and audit comments
+    UI-->>User: Show completion, findings, audit comments, and audit errors
 ```
 
 ## C4-1: System context
@@ -183,7 +214,7 @@ C4Context
     title FinGuard system context
     Person(user, "Developer / auditor", "Imports synthetic or approved files and inspects results")
     System(finguard, "FinGuard local audit platform", "Validates fixed-width files, persists records, and produces local audit comments")
-    System_Ext(ollama, "Ollama local model runtime", "Runs local LLM inference")
+    System_Ext(ollama, "Ollama local model runtime", "Runs local LLM inference and text embeddings")
     System_Ext(kafka, "Kafka broker", "Receives clean, dead-letter, and audit-comment events")
     System_Ext(mongo, "MongoDB", "Optional document persistence target")
     System_Ext(dynamo, "DynamoDB Local", "Optional local persistence target")
@@ -195,7 +226,7 @@ C4Context
     Rel(finguard, mongo, "Persists selected target")
     Rel(finguard, dynamo, "Persists selected target")
     Rel(finguard, chroma, "Seeds and retrieves policy context")
-    Rel(finguard, ollama, "Sends local audit prompts")
+    Rel(finguard, ollama, "Requests local embeddings and audit generation")
     Rel(user, duckdb, "Browses analytics tables through dashboard")
     Rel(mcpClient, finguard, "Uses MCP endpoint")
 ```
@@ -214,7 +245,7 @@ C4Container
         ContainerDb(mongo, "MongoDB", "MongoDB", "Optional clean and DLQ document store")
         ContainerDb(dynamo, "DynamoDB Local", "Local emulator", "Optional clean and DLQ table store")
         ContainerDb(chroma, "ChromaDB", "Chroma HTTP API", "ISO rule vector collection")
-        Container(ollama, "Ollama", "Local model runtime", "Generates audit comments")
+        Container(ollama, "Ollama", "Local model runtime", "Embeds rules/queries and generates audit comments")
         Container(duckApi, "DuckDB browser API", "Python HTTP API", "Read-only analytics browsing")
         ContainerDb(duckDb, "DuckDB", "Embedded database file", "Anomaly-results tables")
         Container(mcp, "MCP server", ".NET 9 / ASP.NET Core", "Schema, pipeline-state, and ISO-rule tools")
@@ -227,7 +258,7 @@ C4Container
     Rel(api, mongo, "Persists when selected")
     Rel(api, dynamo, "Persists when selected")
     Rel(api, chroma, "Seeds ISO rule documents")
-    Rel(api, ollama, "Local HTTP generation")
+    Rel(api, ollama, "Local HTTP embeddings and generation")
     Rel(duckApi, duckDb, "Read-only queries")
     Rel(mcp, core, "Reads schema contracts")
     Rel(user, mcp, "Via an MCP-compatible client")
@@ -246,15 +277,21 @@ C4Component
         Component(validator, "Iso25012Validator", "Core Engine", "Evaluates dataset-level quality requirements")
         Component(publisher, "KafkaRecordPublisher", "Kafka producer", "Publishes clean, DLQ, and audit-comment messages")
         Component(factory, "StorageStrategyFactory", "Factory", "Selects MongoDB or DynamoDB Local strategy")
-        Component(ai, "OllamaAuditClient", "HTTP client", "Retrieves policy context and requests a local audit comment")
+        Component(ai, "OllamaAuditClient", "HTTP client", "Requests comments for dead-letter rows only")
+        Component(telemetry, "PipelineTelemetry", "OpenTelemetry Meter and ActivitySource", "Emits import/row metrics and traces")
         Component(seeder, "ChromaRuleSeeder", "Hosted service", "Loads ISO operational rule Markdown into ChromaDB")
         Component(browser, "DataBrowser", "Browser service", "Reads Chroma, MongoDB, and DynamoDB for the UI")
+    }
+    Container_Boundary(coreEngine, "FinGuardPlatform.CoreEngine RAG services") {
+        Component(vector, "ChromaDbVectorStore", "Core Engine HTTP client", "Stores and retrieves embedding-backed rule documents")
+        Component(embedding, "OllamaEmbeddingGenerator", "Core Engine HTTP client", "Creates rule and query vectors through Ollama /api/embed")
     }
     Container_Ext(kafka, "Kafka", "Broker")
     ContainerDb_Ext(mongo, "MongoDB", "Document store")
     ContainerDb_Ext(dynamo, "DynamoDB Local", "Local table store")
     ContainerDb_Ext(chroma, "ChromaDB", "Vector store")
     Container_Ext(ollama, "Ollama", "Local LLM")
+    Container_Ext(dashboard, "Aspire dashboard", "OTLP receiver", "Displays logs, metrics, and traces")
 
     Rel(routes, worker, "Accepts imports and reads run state")
     Rel(routes, catalog, "Reads and saves schemas")
@@ -265,12 +302,17 @@ C4Component
     Rel(worker, publisher, "Publishes records/comments")
     Rel(worker, factory, "Selects persistence strategy")
     Rel(worker, ai, "Requests audit comments")
+    Rel(worker, telemetry, "Records metrics and spans")
     Rel(publisher, kafka, "Produces")
     Rel(factory, mongo, "Optional persistence")
     Rel(factory, dynamo, "Optional persistence")
-    Rel(ai, chroma, "Retrieves rules")
-    Rel(ai, ollama, "Generates comments")
-    Rel(seeder, chroma, "Upserts rule documents")
+    Rel(ai, vector, "Retrieves the top rule for a dead-letter row")
+    Rel(seeder, vector, "Upserts rule documents")
+    Rel(vector, embedding, "Embeds documents and queries")
+    Rel(embedding, ollama, "POST /api/embed")
+    Rel(ai, ollama, "Generates concise comments")
+    Rel(vector, chroma, "Upserts and queries vectors")
+    Rel(telemetry, dashboard, "Exports OTLP logs, metrics, and traces")
     Rel(browser, chroma, "Lists collections and documents")
     Rel(browser, mongo, "Lists and reads collections")
     Rel(browser, dynamo, "Lists and scans tables")
@@ -289,7 +331,12 @@ classDiagram
     class IngestionWorker {
         +QueueImportAsync(stream, file, schema, target)
         +ProcessImportAsync(request)
+        +TryAuditAsync(deadLetter)
         +BuildReport(run)
+    }
+    class PipelineRunState {
+        +AuditFailures
+        +AuditErrors
     }
     class SchemaCatalog {
         +ListAsync()
@@ -326,7 +373,6 @@ classDiagram
     class DynamoDbLocalStorageStrategy
     class IOllamaAuditClient {
         <<interface>>
-        +CommentAsync(record)
         +CommentOnDeadLetterAsync(payload)
     }
     class OllamaAuditClient {
@@ -336,6 +382,26 @@ classDiagram
     class IAuditRuleRetriever {
         <<interface>>
         +RetrieveIsoRulesAsync(question, topK)
+    }
+    class IVectorStore {
+        <<interface>>
+        +UpsertAsync(chunks)
+        +QueryAsync(query, topK)
+    }
+    class ChromaDbVectorStore {
+        +UpsertAsync(chunks)
+        +QueryAsync(query, topK)
+    }
+    class ITextEmbeddingGenerator {
+        <<interface>>
+        +GenerateAsync(texts)
+    }
+    class OllamaEmbeddingGenerator {
+        +GenerateAsync(texts)
+    }
+    class PipelineTelemetry {
+        +ActivitySource
+        +Import and row metrics
     }
 
     ManagementApi --> IngestionWorker : queues import / reads run
@@ -350,8 +416,14 @@ classDiagram
     IStorageStrategy <|.. DynamoDbLocalStorageStrategy
     IRecordPublisher <|.. KafkaRecordPublisher
     IngestionWorker --> IOllamaAuditClient : requests comments
+    IngestionWorker --> PipelineRunState : updates progress and audit diagnostics
+    IngestionWorker --> PipelineTelemetry : emits metrics and spans
     IOllamaAuditClient <|.. OllamaAuditClient
     OllamaAuditClient --> IAuditRuleRetriever : retrieves RAG context
+    IAuditRuleRetriever <|.. ChromaDbVectorStore
+    IVectorStore <|.. ChromaDbVectorStore
+    ChromaDbVectorStore --> ITextEmbeddingGenerator : embeds documents and queries
+    ITextEmbeddingGenerator <|.. OllamaEmbeddingGenerator
 ```
 
 ## Boundaries and current limitations
@@ -365,5 +437,11 @@ classDiagram
   preloaded JSON analytics example.
 - In-memory queue/run behavior and latest-run persistence do not constitute a
   durable queue or immutable audit history.
+- Local AI comments are generated only for dead-letter rows. Audit failures are
+  counted and surfaced separately; they do not fail the import.
+- Aspire's dashboard needs compatible dashboard, OTLP, and resource-service
+  endpoint settings. The repository's HTTP launch configuration sets
+  `DOTNET_RESOURCE_SERVICE_ENDPOINT_URL`; unsecured HTTP is for local
+  development, while HTTPS requires a trusted development certificate.
 - Local services and project-authored rule notes are not a zero-egress guarantee,
   security certification, or regulatory compliance certification.

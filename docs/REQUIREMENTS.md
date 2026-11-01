@@ -13,14 +13,15 @@ FinGuard is a local-first data ingestion and audit portfolio project. This docum
 | FR-03 | Start local imports through the UI using file upload or directory selection, and show queued/running/completed/failed status with row progress. | Implemented in the pipeline management API and React UI. |
 | FR-04 | Browse saved schemas and edit declarative schema JSON with server-side validation. | Implemented; custom schemas are saved in the pipeline data volume. |
 | FR-05 | Browse ChromaDB collections, DynamoDB Local tables, MongoDB collections, and DuckDB tables from the UI. | Implemented as read-only views. |
-| FR-06 | Use local Ollama inference and ChromaDB-retrieved policy context during the audit path. | Implemented for clean and dead-letter records; strict JSON output remains planned. |
+| FR-06 | Use local Ollama inference and ChromaDB-retrieved policy context during the audit path. | Implemented for dead-letter records only; clean records do not invoke the LLM. Strict JSON output remains planned. |
 | FR-07 | Generate reproducible clean and malformed fixed-width sample files. | Implemented by `tools/generate_samples.py`. All sample identifiers and values are synthetic. |
 | FR-08 | Provide deterministic tests for parsing/schema validation and a local end-to-end smoke harness. | Core unit tests and a service-backed smoke harness are included. |
 | FR-09 | Expose useful service health state for Kafka, Ollama, ChromaDB, DynamoDB Local, MongoDB, and DuckDB. | Implemented in the control-room status panel. |
+| FR-10 | Expose pipeline import/row metrics, traces, and structured logs through Aspire. | Implemented with OpenTelemetry and the AppHost OTLP exporter configuration. |
 
 ## Quality and security requirements
 
-- Process financial input and LLM prompts through local services; do not send record values to cloud-hosted model APIs. The current Ollama prompt includes schema and field names, not field values.
+- Process financial input and LLM prompts through local services; do not send record values to cloud-hosted model APIs. The dead-letter audit prompt contains schema/line information and validation errors, not the raw input line or account values.
 - Keep uploaded files within a configured size limit, store them in the pipeline data directory while processing, and remove temporary upload files after each run.
 - Validate schema IDs, field ranges, duplicate/overlapping fields, data types, and regular expressions before accepting a schema.
 - Treat the UI and management API as a trusted local developer tool. Authentication, authorization, tamper-evident audit storage, and production network hardening are not implemented.
@@ -31,7 +32,9 @@ FinGuard is a local-first data ingestion and audit portfolio project. This docum
 
 - .NET Aspire starts Kafka, MongoDB, DynamoDB Local, Ollama, ChromaDB, the pipeline management API, the DuckDB API, and the React UI.
 - The pipeline worker uses parser, validator, message publisher, storage strategy, Chroma vector store, and Ollama client abstractions/services.
+- Chroma rule documents and audit queries are embedded by the local Ollama embedding model; dead-letter audits retrieve one relevant rule document before requesting a concise generation.
 - MongoDB and DynamoDB Local are selectable per import. Kafka receives clean records and dead letters. DuckDB remains an independent analytics/results store.
+- Aspire receives pipeline OpenTelemetry logs, metrics, and traces. Dashboard launch configuration must provide the resource-service endpoint along with OTLP endpoints; the unsecured HTTP profile is intended for local development only.
 - The browser UI calls the pipeline and DuckDB APIs through Vite's `/pipeline-api` and `/api` development proxies.
 
 ## Acceptance checks

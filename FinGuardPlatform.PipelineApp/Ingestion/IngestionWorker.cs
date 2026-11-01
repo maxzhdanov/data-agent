@@ -7,6 +7,7 @@ using FinGuardPlatform.CoreEngine.Storage;
 using FinGuardPlatform.CoreEngine.Validation;
 using FinGuardPlatform.PipelineApp.Ai;
 using FinGuardPlatform.PipelineApp.Configuration;
+using FinGuardPlatform.PipelineApp.Diagnostics;
 using FinGuardPlatform.PipelineApp.Messaging;
 using FinGuardPlatform.PipelineApp.Resilience;
 using Microsoft.Extensions.Options;
@@ -162,6 +163,19 @@ public sealed class IngestionWorker : BackgroundService
     private async Task ProcessImportAsync(ImportRequest request, CancellationToken cancellationToken)
     {
         var run = _runs[request.RunId];
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("ingestion.process_import");
+        activity?.SetTag("finguard.run.id", run.RunId);
+        activity?.SetTag("finguard.schema.id", run.SchemaId);
+        activity?.SetTag("finguard.storage.target", run.StorageTarget);
+        PipelineTelemetry.ImportRunsStarted.Add(
+            1,
+            new KeyValuePair<string, object?>("storage.target", run.StorageTarget));
+        _logger.LogInformation(
+            "Import run {RunId} started for schema {SchemaId} using {StorageTarget}.",
+            run.RunId,
+            run.SchemaId,
+            run.StorageTarget);
         run.Status = "running";
         run.Stage = "loading schema";
         run.LastStartedAt = DateTimeOffset.UtcNow;
@@ -190,9 +204,15 @@ public sealed class IngestionWorker : BackgroundService
             foreach (var (line, index) in lines)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                using var rowActivity = PipelineTelemetry.ActivitySource.StartActivity("ingestion.process_row");
+                rowActivity?.SetTag("finguard.run.id", run.RunId);
+                rowActivity?.SetTag("finguard.row.number", index + 1);
                 var result = parser.ParseLine(line, index + 1);
+                var rowQuality = result.Record?.Quality ?? result.DeadLetter?.Quality ?? [];
+                run.QualityFindings = MergeFindings(run.QualityFindings, rowQuality);
                 if (result.IsValid && result.Record is not null)
                 {
+                    rowActivity?.SetTag("finguard.row.outcome", "clean");
                     run.Stage = "publishing and persisting clean record";
                     await _publisher.PublishCleanAsync(result.Record, cancellationToken);
                     await persistPipeline.ExecuteAsync(
@@ -201,24 +221,12 @@ public sealed class IngestionWorker : BackgroundService
                     run.CleanPublished++;
                     run.Persisted++;
                     run.ProcessedRows++;
-
-                    run.Stage = "local AI audit";
-                    await SaveProgressAsync(run, cancellationToken);
-                    var comment = await _ollama.CommentAsync(result.Record, cancellationToken);
-                    if (!string.IsNullOrWhiteSpace(comment))
-                    {
-                        await _publisher.PublishAuditCommentAsync(result.Record.CorrelationId, comment, cancellationToken);
-                        run.AuditComments = run.AuditComments.Append(comment).ToArray();
-                    }
-
-                    run.QualityFindings = run.QualityFindings
-                        .Concat(result.Record.Quality)
-                        .GroupBy(finding => (finding.Dimension, finding.Passed, finding.Message))
-                        .Select(group => group.First())
-                        .ToArray();
+                    PipelineTelemetry.CleanRecords.Add(1);
+                    PipelineTelemetry.RowsProcessed.Add(1);
                 }
                 else if (result.DeadLetter is not null)
                 {
+                    rowActivity?.SetTag("finguard.row.outcome", "dead_letter");
                     run.Stage = "publishing and persisting dead letter";
                     await _publisher.PublishDeadLetterAsync(result.DeadLetter, cancellationToken);
                     await persistPipeline.ExecuteAsync(
@@ -228,20 +236,17 @@ public sealed class IngestionWorker : BackgroundService
                     run.DeadLettersPersisted++;
                     run.Persisted++;
                     run.ProcessedRows++;
-                    run.QualityFindings = run.QualityFindings
-                        .Concat(result.DeadLetter.Quality)
-                        .GroupBy(finding => (finding.Dimension, finding.Passed, finding.Message))
-                        .Select(group => group.First())
-                        .ToArray();
+                    PipelineTelemetry.DeadLetters.Add(1);
+                    PipelineTelemetry.RowsProcessed.Add(1);
 
                     run.Stage = "local AI audit";
                     await SaveProgressAsync(run, cancellationToken);
-                    var comment = await _ollama.CommentOnDeadLetterAsync(result.DeadLetter, cancellationToken);
-                    if (!string.IsNullOrWhiteSpace(comment))
-                    {
-                        await _publisher.PublishAuditCommentAsync(result.DeadLetter.CorrelationId, comment, cancellationToken);
-                        run.AuditComments = run.AuditComments.Append(comment).ToArray();
-                    }
+                    await TryAuditAsync(
+                        run,
+                        result.DeadLetter.LineNumber,
+                        ct => _ollama.CommentOnDeadLetterAsync(result.DeadLetter, ct),
+                        result.DeadLetter.CorrelationId,
+                        cancellationToken);
                 }
 
                 await SaveProgressAsync(run, cancellationToken);
@@ -260,6 +265,12 @@ public sealed class IngestionWorker : BackgroundService
             run.Stage = "complete";
             run.LastError = null;
             BuildReport(run);
+            PipelineTelemetry.ImportRunsCompleted.Add(1);
+            _logger.LogInformation(
+                "Import run {RunId} completed with {CleanCount} clean rows and {DeadLetterCount} dead letters.",
+                run.RunId,
+                run.CleanPublished,
+                run.DeadLettered);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -269,15 +280,27 @@ public sealed class IngestionWorker : BackgroundService
         }
         catch (Exception exception)
         {
+            var failedStage = run.Stage;
             run.Status = "failed";
             run.Stage = "failed";
             run.LastError = exception.Message;
+            activity?.SetTag("error.type", exception.GetType().FullName);
+            activity?.SetStatus(System.Diagnostics.ActivityStatusCode.Error, exception.GetType().Name);
+            PipelineTelemetry.ImportRunsFailed.Add(1);
             BuildReport(run);
-            _logger.LogError(exception, "Import run {RunId} failed at stage {Stage}.", run.RunId, run.Stage);
+            _logger.LogError(
+                exception,
+                "Import run {RunId} failed during {FailedStage}.",
+                run.RunId,
+                failedStage);
         }
         finally
         {
             run.LastCompletedAt = DateTimeOffset.UtcNow;
+            PipelineTelemetry.ImportDuration.Record(
+                stopwatch.Elapsed.TotalMilliseconds,
+                new KeyValuePair<string, object?>("status", run.Status),
+                new KeyValuePair<string, object?>("storage.target", run.StorageTarget));
             await SaveProgressAsync(run, CancellationToken.None);
             try
             {
@@ -290,16 +313,67 @@ public sealed class IngestionWorker : BackgroundService
         }
     }
 
+    private async Task TryAuditAsync(
+        PipelineRunState run,
+        int lineNumber,
+        Func<CancellationToken, Task<string?>> audit,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("ingestion.audit");
+        activity?.SetTag("finguard.run.id", run.RunId);
+        activity?.SetTag("finguard.row.number", lineNumber);
+        try
+        {
+            var comment = await audit(cancellationToken);
+            if (string.IsNullOrWhiteSpace(comment))
+            {
+                return;
+            }
+
+            await _publisher.PublishAuditCommentAsync(correlationId, comment, cancellationToken);
+            run.AuditComments = run.AuditComments.Append(comment).ToArray();
+            PipelineTelemetry.AuditComments.Add(1);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            var message = $"Line {lineNumber}: local AI audit failed: {exception.Message}";
+            activity?.SetTag("error.type", exception.GetType().FullName);
+            activity?.SetStatus(System.Diagnostics.ActivityStatusCode.Error, exception.GetType().Name);
+            run.AuditFailures++;
+            run.AuditErrors = run.AuditErrors.Append(message).ToArray();
+            PipelineTelemetry.AuditFailures.Add(1);
+            _logger.LogWarning(
+                exception,
+                "Local AI audit failed for run {RunId}, line {LineNumber}; import processing will continue.",
+                run.RunId,
+                lineNumber);
+        }
+    }
+
     private async Task SaveProgressAsync(PipelineRunState run, CancellationToken cancellationToken) =>
         await _stateStore.SaveAsync(run, cancellationToken);
+
+    private static IReadOnlyList<QualityFinding> MergeFindings(
+        IReadOnlyList<QualityFinding> existing,
+        IReadOnlyList<QualityFinding> incoming) =>
+        existing.Concat(incoming)
+            .GroupBy(finding => (finding.Dimension, finding.Passed, finding.Message))
+            .Select(group => group.First())
+            .ToArray();
 
     private static void BuildReport(PipelineRunState run)
     {
         run.FileHealthScore = run.TotalRows == 0
             ? 0
             : (int)Math.Round((double)run.CleanPublished / run.TotalRows * 100);
-        run.PrimaryFailureReason = run.QualityFindings.FirstOrDefault(finding => !finding.Passed)?.Message
-                                   ?? (run.LastError is null ? "No validation failures." : run.LastError);
+        run.PrimaryFailureReason = run.LastError
+                                   ?? run.QualityFindings.FirstOrDefault(finding => !finding.Passed)?.Message
+                                   ?? "No validation failures.";
         run.ReportMarkdown = $"""
             # Import audit report
 

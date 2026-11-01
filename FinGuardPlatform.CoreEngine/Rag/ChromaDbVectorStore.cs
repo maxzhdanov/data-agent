@@ -10,12 +10,18 @@ public sealed class ChromaDbVectorStore : IVectorStore
     private readonly HttpClient _http;
     private readonly ChromaOptions _options;
     private readonly ILogger<ChromaDbVectorStore> _logger;
+    private readonly ITextEmbeddingGenerator _embeddings;
 
-    public ChromaDbVectorStore(HttpClient http, IOptions<ChromaOptions> options, ILogger<ChromaDbVectorStore> logger)
+    public ChromaDbVectorStore(
+        HttpClient http,
+        IOptions<ChromaOptions> options,
+        ILogger<ChromaDbVectorStore> logger,
+        ITextEmbeddingGenerator embeddings)
     {
         _http = http;
         _options = options.Value;
         _logger = logger;
+        _embeddings = embeddings;
         if (_http.BaseAddress is null && Uri.TryCreate(_options.BaseUrl, UriKind.Absolute, out var uri))
         {
             _http.BaseAddress = uri;
@@ -30,6 +36,9 @@ public sealed class ChromaDbVectorStore : IVectorStore
             return;
         }
 
+        var embeddings = await _embeddings.GenerateAsync(
+            payload.Select(chunk => chunk.Text).ToArray(),
+            cancellationToken);
         var collectionId = await FindCollectionIdAsync(_options.Collection, cancellationToken);
         if (collectionId is null)
         {
@@ -48,6 +57,7 @@ public sealed class ChromaDbVectorStore : IVectorStore
         var body = new
         {
             ids = payload.Select(c => c.Id).ToArray(),
+            embeddings,
             documents = payload.Select(c => c.Text).ToArray(),
             metadatas = payload.Select(c => new Dictionary<string, string>(c.Metadata)
             {
@@ -72,7 +82,8 @@ public sealed class ChromaDbVectorStore : IVectorStore
             return [];
         }
 
-        var request = new { query_texts = new[] { query }, n_results = topK };
+        var queryEmbeddings = await _embeddings.GenerateAsync([query], cancellationToken);
+        var request = new { query_embeddings = queryEmbeddings, n_results = topK };
         using var response = await _http.PostAsJsonAsync(
             $"/api/v2/tenants/{Uri.EscapeDataString(_options.Tenant)}/databases/{Uri.EscapeDataString(_options.Database)}/collections/{Uri.EscapeDataString(collectionId)}/query",
             request,

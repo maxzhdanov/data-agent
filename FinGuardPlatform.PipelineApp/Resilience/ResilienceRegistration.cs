@@ -22,16 +22,6 @@ public static class ResilienceRegistration
         services.AddResiliencePipeline(Dynamo, pipeline => Configure(pipeline, settings));
         services.AddResiliencePipeline(Ollama, pipeline => Configure(pipeline, settings));
 
-        services.ConfigureHttpClientDefaults(http =>
-        {
-            http.AddStandardResilienceHandler(options =>
-            {
-                options.Retry.MaxRetryAttempts = settings.RetryCount;
-                options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
-                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(60);
-            });
-        });
-
         return services;
     }
 
