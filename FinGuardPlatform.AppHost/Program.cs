@@ -34,29 +34,24 @@ var ollama = builder.AddContainer("ollama", "ollama/ollama")
 var chroma = builder.AddContainer("chromadb", "chromadb/chroma")
     .WithHttpEndpoint(port: 8000, targetPort: 8000, name: "http");
 
-// 4. Distributed Processing Tier (Apache Spark Engine Sandbox Node)
-var spark = builder.AddContainer("spark", "apache/spark", "3.5.3-python3")
-    .WithHttpEndpoint(port: 8080, targetPort: 8080, name: "ui")
-    .WithEndpoint(port: 7077, targetPort: 7077, name: "master")
-    .WithBindMount("../src/data-science", "/opt/finguard/data-science", isReadOnly: true)
-    .WithArgs("/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master");
+// 4. Embedded analytics database and browser API
+var duckdb = builder.AddDockerfile("duckdb", "../src/data-science")
+    .WithHttpEndpoint(port: 8002, targetPort: 8080, name: "http")
+    .WithVolume("finguard-duckdb", "/data")
+    .WithEnvironment("DUCKDB_PATH", "/data/anomalies.duckdb");
 
 // 5. Ingestion Engine Pipeline Service (Containerized to bypass Windows ASR rules)
-var pipeline = builder.AddContainer("pipeline", "finguard-pipeline")
-    .WithBindMount("../FinGuardPlatform.PipelineApp", "/app", isReadOnly: false)
+var pipeline = builder.AddDockerfile("pipeline", "..", "FinGuardPlatform.PipelineApp/Dockerfile")
     .WaitFor(mongo)
-    .WaitFor(spark)
     .WithEnvironment("Kafka__BootstrapServers", "kafka:9092")
     .WithEnvironment("Storage__Target", "MongoDb")
     .WithEnvironment("Storage__Mongo__Database", "finguard")
     .WithEnvironment("Ollama__BaseUrl", "http://ollama:11434")
     .WithEnvironment("Chroma__BaseUrl", "http://chromadb:8000")
-    .WithEnvironment("Storage__Dynamo__ServiceUrl", "http://dynamodb-local:8000")
-    .WithEnvironment("Spark__Ui", "http://spark:8080");
+    .WithEnvironment("Storage__Dynamo__ServiceUrl", "http://dynamodb-local:8000");
 
 // 6. Context Broker Bridge Server (Model Context Protocol Protocol Implementation Instance)
-builder.AddContainer("mcp", "finguard-mcp")
-    .WithBindMount("../FinGuardPlatform.McpServer", "/app", isReadOnly: false)
+builder.AddDockerfile("mcp", "..", "FinGuardPlatform.McpServer/Dockerfile")
     .WaitFor(pipeline)
     .WithEnvironment("Chroma__BaseUrl", "http://chromadb:8000");
 
@@ -64,6 +59,8 @@ builder.AddContainer("mcp", "finguard-mcp")
 builder.AddNpmApp("frontend-ui", "../frontend-ui")
     .WithHttpEndpoint(env: "PORT")
     .WithExternalHttpEndpoints()
-    .WithEnvironment("BROWSER", "none");
+    .WithEnvironment("BROWSER", "none")
+    .WithEnvironment("DUCKDB_API_URL", duckdb.GetEndpoint("http"))
+    .WaitFor(duckdb);
 
 builder.Build().Run();

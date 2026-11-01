@@ -1,5 +1,6 @@
-FROM apache/spark:3.5.3
+FROM python:3.12-slim
 WORKDIR /opt/finguard/data-science
-COPY requirements.txt .
-COPY . .
-CMD ["python3", "anomaly_detection.py"]
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . ./
+CMD ["python", "duckdb_api.py"]

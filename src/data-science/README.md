@@ -1,23 +1,29 @@
-# FinGuard data science service
+# FinGuard data science tools
 
-PySpark job for amount z-score anomalies and a Chroma ingest script for ISO rule seeds.
+Embedded DuckDB job for amount z-score anomalies and a Chroma ingest script for ISO rule seeds.
 
-## Local Spark / Delta
+## Amount anomaly detection
 
-1. Start the stack from `FinGuardPlatform.AppHost`. It runs the Apache Spark 3.5.3 Python image as a standalone master (Spark UI on port 8080, master 7077).
-2. Mount this directory into the Spark container at `/opt/finguard/data-science`.
-3. Submit:
+Install the Python dependencies and run the job:
 
 ```
-spark-submit --packages io.delta:delta-spark_2.12:3.2.1 src/data-science/anomaly_detection.py
+pip install -r src/data-science/requirements.txt
+python src/data-science/anomaly_detection.py
 ```
 
-JSON samples are in `samples/clean-records.json`. Later iterations should consume `finguard.records.clean` from Kafka and write Delta tables.
+DuckDB runs in-process; no separate database server or Spark container is needed. When the persisted database does not exist, the Aspire browser API initializes it from `samples/clean-records.json`. The standalone job also reads that JSON-lines file, computes amount z-scores per currency, and replaces the `anomalies` table. Override input and database paths with `--source` and `--database`.
+
+The React dashboard browses the database through the read-only API:
+
+- `GET /api/health`
+- `GET /api/tables`
+- `GET /api/tables/anomalies?limit=25&offset=0`
+
+In Aspire, the API is exposed on host port `8002`. Table row requests are paginated (up to 200 rows per request).
 
 ## RAG ingest
 
 ```
-pip install -r src/data-science/requirements.txt
 python src/data-science/rag_ingest.py
 ```
 

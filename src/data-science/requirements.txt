@@ -1,5 +1,4 @@
-pyspark==3.5.3
-delta-spark==3.2.1
+duckdb==2.0.0
 pandas==2.2.3
 chromadb==0.6.3
 kafka-python==2.0.2
