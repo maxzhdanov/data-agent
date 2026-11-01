@@ -28,6 +28,13 @@ With the Aspire stack running, run the integration smoke test:
 
 See [docs/REQUIREMENTS.md](./docs/REQUIREMENTS.md) and [docs/agent_functional_specs.md](./docs/agent_functional_specs.md) for implemented scope, limitations, and follow-up requirements. The local-first design is not itself a security or regulatory certification; network egress controls and production access control remain deployment responsibilities.
 
+Architecture and onboarding references:
+
+- [Component guide, LLM/RAG explanation, Kafka UI guidance, and import examples](./docs/COMPONENTS.md)
+- [Solution architecture, data flow, and four C4 views](./docs/ARCHITECTURE.md)
+- [ADR-0001: local-first ingestion and pluggable persistence](./docs/adr/0001-local-first-ingestion-and-storage.md)
+- [Synthetic clean import file](./FinGuardPlatform.PipelineApp/samples/generated/payments-clean.fw) and [malformed import file](./FinGuardPlatform.PipelineApp/samples/generated/payments-malformed.fw)
+
 ## Projects
 
 | Project | Role |
